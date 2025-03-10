@@ -16,3 +16,16 @@ app.add_middleware(
 @app.get("/health-check")
 def health_check():
     return {"status": "good"}
+
+@app.post("/refresh-menu")
+def refresh_menu():
+    fetch_data()
+    generate_embedding()
+
+    return {"status": "OK"}
+
+@app.post("/prompt")
+def prompt(messages: str):
+    response = generate_prompt(messages)
+
+    return {"message": response}
