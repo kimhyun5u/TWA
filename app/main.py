@@ -1,7 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.menu_agent import fetch_data, generate_embedding, generate_prompt
+from app.services.data_fetcher import fetch_data
+from app.services.llm_handler import generate_prompt, generate_embedding
 
 app = FastAPI()
 
