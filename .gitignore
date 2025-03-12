@@ -1,8 +1,8 @@
 .vscode
 .vscode/**
 
-faiss_index
-faiss_index/**
+*_faiss_index
+*_faiss_index/**
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
