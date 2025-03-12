@@ -11,7 +11,14 @@ class Settings(BaseSettings):
 
     aoai_deploy_gpt4o: str
     aoai_deploy_gpt4o_mini: str
+    aoai_deploy_gpt4o_version: str
     aoai_endpoint: str
+
+
+    aoai_o3_mini_api_key: str
+    aoai_o3_mini_endpoint: str
+    aoai_o3_mini_deployment_name:str
+    aoai_o3_mini_version: str
 
     class Config:
         env_file = '.env'
