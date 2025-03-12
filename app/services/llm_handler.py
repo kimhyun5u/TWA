@@ -13,21 +13,52 @@ from langgraph.prebuilt import create_react_agent
 
 from app.config import settings
 from app.shared_state import all_menus
+import os
+from langchain_core.documents import Document
 
+# Initialize the retriever
 retriever = None
+
+embeddings = AzureOpenAIEmbeddings(
+    model=settings.aoai_deploy_embed_3_large,
+    openai_api_version="2024-02-01",
+    api_key=settings.aoai_api_key,
+    azure_endpoint=settings.aoai_endpoint
+)
+
+llm = AzureChatOpenAI(
+    openai_api_version="2024-08-01-preview",
+    azure_deployment=settings.aoai_deploy_gpt4o_mini,
+    temperature=0.0,
+    api_key=settings.aoai_api_key,
+    azure_endpoint=settings.aoai_endpoint
+)
+
+if os.path.exists("faiss_index") and os.path.exists("faiss_index/index.pkl"):
+    # Vector store already exists, load it
+    print("Loading existing vector store from disk...")
+    vectorstore = FAISS.load_local("faiss_index", embeddings, allow_dangerous_deserialization=True)
+    retriever = vectorstore.as_retriever()
+else:
+    # Vector store doesn't exist yet
+    print("No existing vector store found. Will create when needed.")
 
 def generate_embedding():
     global retriever
-    print("Generating embeddings...")
-    embeddings = AzureOpenAIEmbeddings(
-        model=settings.aoai_deploy_embed_3_large,
-        openai_api_version="2024-02-01",
-        api_key=settings.aoai_api_key,
-        azure_endpoint=settings.aoai_endpoint
-    )
     print("Embeddings created:", embeddings)
-    vectorstore = FAISS.from_documents(documents=all_menus, embedding=embeddings)
-    print("Vectorstore created:", vectorstore)
+    # Check if previously saved vectorstore exists
+    if os.path.exists("faiss_index") and os.path.exists("faiss_index/index.pkl"):
+        print("Loading existing vectorstore from disk...")
+        vectorstore = FAISS.load_local("faiss_index", embeddings, allow_dangerous_deserialization=True)
+    else:
+        # Create new vectorstore if not exists
+        print("Creating new vectorstore...")
+        vectorstore = FAISS.from_documents(documents=all_menus, embedding=embeddings)
+        # Save vectorstore to disk for future use
+        vectorstore.save_local("faiss_index")
+        print("Vectorstore saved to disk")
+    
+    print("Vectorstore created/loaded:", vectorstore)
     retriever = vectorstore.as_retriever()
     print("Retriever created:", retriever)
 
@@ -63,14 +94,6 @@ class Router(TypedDict):
     """Worker to route to next. If no workers needed, route to FINISH."""
     next: Literal[*options]
 
-llm = AzureChatOpenAI(
-    openai_api_version="2024-08-01-preview",
-    azure_deployment=settings.aoai_deploy_gpt4o_mini,
-    temperature=0.0,
-    api_key=settings.aoai_api_key,
-    azure_endpoint=settings.aoai_endpoint
-)
-
 system_prompt = (
     "You are a supervisor tasked with managing a conversation between the"
     f" following workers: {members}. Given the following user request,"
@@ -96,15 +119,15 @@ def supervisor_node(state: State) -> Command[Literal[*members, "__end__"]]:
 # Construct Graph
 calander_agent = create_react_agent(
     llm, tools=[get_next_date, get_previous_date, get_today_date]
-    , prompt="You are a calander master. You can retrieve today date, previous date and next date. Do not recommend menu."
+    , prompt="You are a calander master. You can retrieve today date, previous date and next date. Do not recommend menu. 답변에 대한 추가적인 의견을 제공하지 말고 날짜만 답변에 포함해주세요."
 )
 
 menu_retriever_agent = create_react_agent(
-    llm, tools=[get_menus], prompt="You are menu retriever. You can check all menu on following date with Menu VectorDB. Do Not Math. 정확히 주어진 날짜에 대한 음식만 찾아. Do not recommend menu."
+    llm, tools=[get_menus], prompt="You are menu retriever. You can check all menu on following date with Menu VectorDB. Do Not Math. 정확히 주어진 날짜에 대한 음식만 찾아. Do not recommend menu. 답변에 추가적인 의견을 제공하지 말고 메뉴 정보들만 제공해주세요"
 )
 
 menu_recommander_agent = create_react_agent(
-    llm, tools=[], prompt="You are menu recommander. 사용자가 원하는 메뉴를 주어진 메뉴들 중에 골라주세요. 만약 면요리에 대해서 물어본다면 국수, 라면, 파스타 등에 대한 정보를 찾아주세요."
+    llm, tools=[], prompt="You are menu recommander. 사용자가 원하는 메뉴를 주어진 메뉴들 중에 골라주세요. 만약 면요리에 대해서 물어본다면 국수, 라면, 파스타 등에 대한 정보를 찾아주세요. 또한, 답변은 상세하게 진행해주세요."
 )
 
 def calander_node(state: State) -> Command[Literal["supervisor"]]:
@@ -170,9 +193,9 @@ def generate_prompt(messages: str):
         # chunk에서 messages의 마지막 항목을 추출 (응답이 여기에 있다고 가정)
         print(c)
         if "menu_retriever" in c:
-            result.append(c["menu_retriever"]["messages"][-1].content)
+            result.append({"role": "menu_retriever","content": c["menu_retriever"]["messages"][-1].content})
         if "menu_recommander" in c:
-            result.append(c["menu_recommander"]["messages"][-1].content)
+            result.append({"role": "menu_recommander","content": c["menu_recommander"]["messages"][-1].content})
         if "calander" in c:
-            result.append(c["calander"]["messages"][-1].content)
-    return "".join(result)
+            result.append({"role": "calander","content": c["calander"]["messages"][-1].content})
+    return result
