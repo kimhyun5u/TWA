@@ -29,4 +29,4 @@ def refresh_menu():
 def prompt(messages: str):
     response = generate_prompt(messages)
 
-    return {"message": response}
+    return {"messages": response}
