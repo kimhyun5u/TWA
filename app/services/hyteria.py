@@ -7,7 +7,9 @@ from app.shared_state import hyteria_menus
 source = "hyteria"
 
 def fetch_menu_data(date):
-    global hyteria_menus
+    # date 가 YYYYMMDD 형식이어야함
+    date = date.replace("-", "")
+
     url = f"https://mc.skhystec.com/V3/prc/selectMenuList.prc?campus=BD&cafeteriaSeq=21&mealType=LN&ymd={date}"
     response = requests.post(url, verify=False)
     
@@ -17,7 +19,7 @@ def fetch_menu_data(date):
             if data.get("RESULT") == 'N':
                 data = None
             menu_data = {"date": datetime.strptime(date, '%Y%m%d').strftime("%Y-%m-%d"), "body": data, "source": source}
-            hyteria_menus.append(menu_data)
+            return menu_data
         except json.JSONDecodeError:
             print("JSON decode error")
     else:

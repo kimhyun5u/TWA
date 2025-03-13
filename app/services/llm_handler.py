@@ -1,23 +1,32 @@
+
+import redis
+import json
+import os
+import re
+
 from datetime import datetime, timedelta
 from typing import Annotated, Literal
 from typing_extensions import TypedDict
 
-from langchain_community.vectorstores import FAISS
-from langchain_core.prompts import PromptTemplate
-from langchain_core.tools import tool
 from langchain_openai import AzureChatOpenAI, AzureOpenAIEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_core.prompts import ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemplate
+from langchain_core.tools import tool
+from langchain_core.messages import HumanMessage
+from langchain_core.documents import Document
+from langgraph.prebuilt import create_react_agent
 from langgraph.graph import StateGraph, START, MessagesState, END
 from langgraph.types import Command
-from langchain_core.messages import HumanMessage
-from langgraph.prebuilt import create_react_agent
 
 from app.config import settings
 
-from app.shared_state import hyteria_menus
 from app.shared_state import dining_code_menus
 
-import os
-from langchain_core.documents import Document
+from app.services.hyteria import fetch_menu_data as fetch_hyteria_data
+
+from app.structures.date_output import DateOutput
+from app.structures.hyteria_menu_output import HyteriaMenuOutputList
+
 
 # Initialize the retriever
 retrievers = {}
@@ -30,13 +39,13 @@ embeddings = AzureOpenAIEmbeddings(
 )
 
 # o3
-# llm = AzureChatOpenAI(
-#     openai_api_version=settings.aoai_o3_mini_version,
-#     azure_deployment=settings.aoai_o3_mini_deployment_name,
-#     # temperature=0.0,
-#     api_key=settings.aoai_o3_mini_api_key,
-#     azure_endpoint=settings.aoai_o3_mini_endpoint
-# )
+o3_llm = AzureChatOpenAI(
+    openai_api_version=settings.aoai_o3_mini_version,
+    azure_deployment=settings.aoai_o3_mini_deployment_name,
+    # temperature=0.0,
+    api_key=settings.aoai_o3_mini_api_key,
+    azure_endpoint=settings.aoai_o3_mini_endpoint
+)
 
 # 4o mini
 llm = AzureChatOpenAI(
@@ -106,11 +115,9 @@ def get_next_date(d: Annotated[int, "며칠 후의 값을 가져온다."]):
     return (datetime.now() + timedelta(days=d)).strftime("%Y-%m-%d")
 
 @tool
-def get_hyteria_menus(message: Annotated[str, "질의 내용 중 하이테리아(구내식당, hyteria) VectorDB 에서 유사도 검색이 필요할 것들에 대한 질의"]):
+def get_hyteria_menus(date: Annotated[str, "질의 내용 중 하이테리아(구내식당, hyteria) VectorDB 에서 유사도 검색이 필요할 것들에 대한 질의"]):
     """메뉴에 대해서 검색하고 실제 있는 값인지 확인한다."""
-    if "hyteria" not in retrievers:
-        return "No retriever available. Please try again later."
-    return retrievers["hyteria"].invoke(message)
+    return fetch_hyteria_data(date)
 
 @tool
 def get_dining_code_menus(message: Annotated[str, "질의 내용 중 다이닝코드(dining_code) VectorDB 에서 유사도 검색이 필요할 것들에 대한 질의"]):
@@ -135,7 +142,9 @@ system_prompt = (
     "You are a supervisor tasked with managing a conversation between the"
     f" following workers: {members}. Given the following user request,"
     " respond with the worker to act next. Each worker will perform a"
-    " task and respond with their results and status. You Should use calander worker if user'll ask about date relate. "
+    " task and respond with their results and status. "
+    "If user won't ask about menu or restaurant, You MUST not Answer. Just response with FINISH."
+    "You Should use calander worker if user'll ask about date relate. "
     "구내식당 = hyteria, [다이닝코드, 외부] = dining_code"
     "If date related question is asked, You Should use calander worker before other workers. "
     f"If requests doesn't include any specific menu or restaurants, You Should use all of menu retriever worker."
@@ -162,39 +171,89 @@ def supervisor_node(state: State) -> Command[Literal[*members, "__end__"]]:
 
 # Construct Graph
 calander_agent = create_react_agent(
-    llm, tools=[get_next_date, get_previous_date, get_today_date]
-    , prompt="You are a calander master. You can retrieve today date, previous date and next date. Do not recommend menu. 답변에 대한 추가적인 의견을 제공하지 말고 날짜만 답변에 포함해주세요."
+    model=llm, tools=[get_next_date, get_previous_date, get_today_date]
+    , prompt="You are a calander master. You can retrieve today date, previous date and next date. Do not recommend menu. 답변에 대한 추가적인 의견을 제공하지 말고 날짜만 답변에 포함해주세요. Don't refer the history. Don't recommand"
+    , response_format=DateOutput
 )
 
 hyteria_menu_retriever_agent = create_react_agent(
-    llm, tools=[get_hyteria_menus], prompt="You are menu retriever. You can check all menu on following date with Menu VectorDB. Do Not Math. 정확히 주어진 날짜에 대한 음식만 찾아. Do not recommend menu. 답변에 추가적인 의견을 제공하지 말고 메뉴 정보들만 제공해주세요. 정보를 변형하지말고 정확하게 전달해주세요."
+    llm, tools=[get_hyteria_menus]
+    , prompt="You are menu retriever. You can check all menu on following date with Menu VectorDB. Do Not Math. 정확히 주어진 날짜에 대한 음식만 찾아. Do not recommend menu. 답변에 추가적인 의견을 제공하지 말고 메뉴 정보들만 제공해주세요. 정보를 변형하지말고 정확하게 전달해주세요."
+    , response_format=HyteriaMenuOutputList
 )
 
 dining_code_menus_retriever_agent = create_react_agent(
-    llm, tools=[get_dining_code_menus], prompt="You are restaurant retriever. You can check all menu on following date with Restaurant VectorDB. Do Not Math. Do not recommend restaurant. 답변에 추가적인 의견을 제공하지 말고 레스토랑 정보들만 제공해주세요. 사용자의 요청의 적합한 레스토랑만 가져오세요. 모든 레스토랑을 원하는 경우 모든 레스토랑을 가져와주세요. 정보를 변형하지말고 정확하게 전달해주세요. 다른 에이전트에서 전달 받은 값과 상관없이 dining_code vector DB 의 값을 조회해주세요."
+    llm, tools=[get_dining_code_menus], prompt="You are restaurant retriever. You can check all menu on following date with Restaurant VectorDB. Do Not Math. Do not recommend restaurant. 답변에 추가적인 의견을 제공하지 말고 레스토랑 정보들만 제공해주세요. 사용자의 요청의 적합한 레스토랑만 가져오세요. 모든 레스토랑을 원하는 경우 모든 레스토랑을 가져와주세요. 정보를 변형하지말고 정확하게 전달해주세요. 다른 에이전트에서 전달 받은 값과 상관없이 dining_code vector DB 의 값을 조회해주세요. Don't recommand."
 )
 
 menu_recommander_agent = create_react_agent(
-    llm, tools=[], prompt="You are menu recommander. 다른 agent에 의해 전달받은 값이 없으면 답을 줄 수 없습니다. 사용자가 원하는 메뉴를 주어진 메뉴들 중에 골라주세요. 만약 면요리에 대해서 물어본다면 국수, 라면, 파스타 등에 대한 정보를 찾아주세요. 또한, 답변은 상세하게 진행해주세요. 하이테리아는 hyteria 입니다. 다이닝코드는 dining_code 입니다. 구내식당(hyteria)와 외부식당(dining_code)의 메뉴를 모두 고려해주세요. 답변에 대한 추가적인 의견을 제공하지 말고 메뉴 정보들만 제공해주세요."
+    o3_llm, tools=[], prompt="You are menu recommander. 다른 agent에 의해 전달받은 값이 없으면 답을 줄 수 없습니다. 사용자가 원하는 메뉴를 주어진 메뉴들 중에 골라주세요. 만약 면요리에 대해서 물어본다면 국수, 라면, 파스타 등에 대한 정보를 찾아주세요. 또한, 답변은 상세하게 진행해주세요. 하이테리아는 hyteria 입니다. 다이닝코드는 dining_code 입니다. 구내식당(hyteria)와 외부식당(dining_code)의 메뉴를 모두 고려해주세요. 답변에 대한 추가적인 의견을 제공하지 말고 메뉴 정보들만 제공해주세요."
 )
 
 def calander_node(state: State) -> Command[Literal["supervisor"]]:
+    
     result = calander_agent.invoke(state)
+
+    # Extract the response content
+    content = result["messages"][-1].content
+    
+    # Process the content to extract date information
+    # You can use an LLM call here to parse the content into structured data if needed
+    try:
+        # Using llm to parse the calendar content into a structured format
+        structured_content = llm.with_structured_output(DateOutput).invoke(
+            f"Extract the date information from this text: {content}"
+        )
+        
+        # Create a formatted response that includes the structured date info
+        formatted_response = structured_content.date
+        if hasattr(structured_content, 'description') and structured_content.description:
+            formatted_response += f", Description: {structured_content.description}"
+    except Exception as e:
+        print(f"Error parsing calendar response: {e}")
+        formatted_response = content  # Fallback to original content
+    
     return Command(
         update={
             "messages": [
-                HumanMessage(content=result["messages"][-1].content, name="calander")
+                HumanMessage(content=formatted_response, name="calander")
             ]
         },
         goto="supervisor"
     )
 
 def hyteria_menu_retriever_node(state: State) -> Command[Literal["supervisor"]]:
-    result = hyteria_menu_retriever_agent.invoke(state)
+    date = state["messages"][-1].content
+    # validate date with regex if it is not in the correct format(YYYY-MM-DD) go to calander node
+    if not re.match(r"\d{4}-\d{2}-\d{2}", date):
+        return Command(goto="calander")
+    
+    content = get_hyteria_menus(date)
+    # # result = hyteria_menu_retriever_agent.invoke(state)
+
+    # # Extract the response content
+    # # content = result["messages"][-1].content
+    
+    # print("content: ", content)
+
+    # Process the content to extract date information
+    # You can use an LLM call here to parse the content into structured data if needed
+    try:
+        # Using llm to parse the calendar content into a structured format
+        processed_content = llm.invoke(
+            f"다음 리스트를 ```markdown``` 같은 것을 넣지말고 마크다운문법으로 예쁘게 만들어줘(메뉴 이미지의 baseurl은 20250313_BD_2_4_LN_1_20250313111249_0.jpg 이면 https://mc.skhystec.com/nsf/menuImage/20250313/BD/2/4/ 이야): {content}"
+        )
+    except Exception as e:
+        print(f"Error parsing data response: {e}")
+        formatted_response = content  # Fallback to original content
+    
+    formatted_response = processed_content.content
+    
+    # print(formatted_response)
     return Command(
         update={
             "messages": [
-                HumanMessage(content=result["messages"][-1].content, name="hyteria_menu_retriever")
+                HumanMessage(content=str(formatted_response), name="hyteria_menu_retriever")
             ]
         },
         goto="supervisor"
@@ -221,6 +280,7 @@ def menu_recommander_node(state: State) -> Command[Literal["supervisor"]]:
         },
         goto="supervisor"
     )
+
 builder = StateGraph(State)
 builder.add_edge(START, "supervisor")
 builder.add_node("supervisor", supervisor_node)
@@ -230,8 +290,19 @@ builder.add_node("dining_code_menu_retriever", dining_code_menu_retriever_node)
 builder.add_node("menu_recommander", menu_recommander_node)
 graph = builder.compile()
 
-def generate_prompt(messages: str):
-    prompt = PromptTemplate.from_template(
+def generate_prompt(messages: str, user_id: str):
+    rd = redis.Redis(host='localhost', port=6379, db=0)
+
+    # Get the data from Redis and deserialize it
+    user_history_json = rd.get(user_id)
+    if user_history_json:
+        user_history = json.loads(user_history_json)
+    else:
+        user_history = []
+
+    # print("user_history:", user_history)
+
+    s_prompt = SystemMessagePromptTemplate.from_template(
         f"""You are an assistant for question-answering tasks. 
         Use the following pieces of retrieved context to answer the question. 
         If you don't know the answer, just say that you don't know. 
@@ -241,19 +312,24 @@ def generate_prompt(messages: str):
         What's date of today? And Think about the date in {messages}.
         만약 메뉴 추천을 원한다면 {datetime.now().strftime('%Y-%m-%d')}의 메뉴들을 찾아보고, 그 중에서 적합한 메뉴를 추천해주세요.
         단순 메뉴를 나열하는 것이 아닌 추천을 요청받으면 반드시 추천해주세요.
-        Answer in Korean.
+        ```markdown``` 같은 것을 넣지말고 마크다운문법으로 최종 결과를 출력해주세요.
 
+        Answer in Korean.
+        """)
+    u_prompt = HumanMessagePromptTemplate.from_template(f"""
         #Question:
         {messages}
 
         #Answer:"""
     )
 
+    chat_prompt = ChatPromptTemplate.from_messages([s_prompt, u_prompt])
+
     result = []
-    for c in graph.stream({"messages": [("user", prompt.format())]}):
+    for c in graph.stream({"messages": [ ("user", chat_prompt.format())]}):
         # chunk에서 messages의 마지막 항목을 추출 (응답이 여기에 있다고 가정)
         print(c)
-        if "hyteria_menu_retriever" in c:
+        if "hyteria_menu_retriever" in c and "messages" in c["hyteria_menu_retriever"]:
             result.append({"role": "hyteria_menu_retriever","content": c["hyteria_menu_retriever"]["messages"][-1].content})
         if "dining_code_menu_retriever" in c:
             result.append({"role": "dining_code_menu_retriever","content": c["dining_code_menu_retriever"]["messages"][-1].content})
@@ -261,4 +337,10 @@ def generate_prompt(messages: str):
             result.append({"role": "menu_recommander","content": c["menu_recommander"]["messages"][-1].content})
         if "calander" in c:
             result.append({"role": "calander","content": c["calander"]["messages"][-1].content})
+    
+    # user_history 의 길이가 10이 넘어가지 않도록 관리
+    user_history.append({"request": chat_prompt.format(),"response": result})
+    
+    # list 파일 redis
+    rd.set(user_id, json.dumps(user_history[-10:]))
     return result

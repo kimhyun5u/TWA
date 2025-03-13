@@ -36,7 +36,7 @@ async def refresh_menu():
     return {"status": "OK"}
 
 @app.post("/prompt")
-def prompt(messages: str):
-    response = generate_prompt(messages)
+def prompt(messages: str, user_id: str):
+    response = generate_prompt(messages, user_id)
 
     return {"messages": response}
