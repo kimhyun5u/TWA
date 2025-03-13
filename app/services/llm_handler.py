@@ -23,6 +23,7 @@ from app.config import settings
 from app.shared_state import dining_code_menus
 
 from app.services.hyteria import fetch_menu_data as fetch_hyteria_data
+from app.services.dining_code_fetcher import fetch_exact_dining_code_data
 
 from app.structures.date_output import DateOutput
 from app.structures.hyteria_menu_output import HyteriaMenuOutputList
@@ -95,7 +96,7 @@ def generate_embedding(source, menus):
     # print("Retriever created:", retriever)
 
 def generate_embeddings():
-    for source, menus in [("hyteria", hyteria_menus), ("dining_code", dining_code_menus)]:
+    for source, menus in [("dining_code", dining_code_menus)]:
         generate_embedding(source, menus)
 
 # Create tools
@@ -126,6 +127,10 @@ def get_dining_code_menus(message: Annotated[str, "질의 내용 중 다이닝�
         return "No retriever available. Please try again later."
     return retrievers["dining_code"].invoke(message)
 
+@tool
+def get_exact_dining_code_menus(v_rid: Annotated[str, "질의 내용 중 다이닝코드(dining_code) Internet 에서 정확한 값이 필요한 경우"]):
+    """메뉴에 대해서 검색하고 실제 있는 값인지 확인한다."""
+    return fetch_exact_dining_code_data(v_rid)
 
 # Create Agent Supervisor
 members = ["calander", "hyteria_menu_retriever", "dining_code_menu_retriever", "menu_recommander"]
@@ -183,7 +188,7 @@ hyteria_menu_retriever_agent = create_react_agent(
 )
 
 dining_code_menus_retriever_agent = create_react_agent(
-    llm, tools=[get_dining_code_menus], prompt="You are restaurant retriever. You can check all menu on following date with Restaurant VectorDB. Do Not Math. Do not recommend restaurant. 답변에 추가적인 의견을 제공하지 말고 레스토랑 정보들만 제공해주세요. 사용자의 요청의 적합한 레스토랑만 가져오세요. 모든 레스토랑을 원하는 경우 모든 레스토랑을 가져와주세요. 정보를 변형하지말고 정확하게 전달해주세요. 다른 에이전트에서 전달 받은 값과 상관없이 dining_code vector DB 의 값을 조회해주세요. Don't recommand."
+    llm, tools=[get_dining_code_menus, get_exact_dining_code_menus], prompt="You are restaurant retriever. You can check all menu on following date with Restaurant VectorDB. Do Not Math. Do not recommend restaurant. 답변에 추가적인 의견을 제공하지 말고 레스토랑 정보들만 제공해주세요. 사용자의 요청의 적합한 레스토랑만 가져오세요. 모든 레스토랑을 원하는 경우 모든 레스토랑을 가져와주세요. 정보를 변형하지말고 정확하게 전달해주세요. 다른 에이전트에서 전달 받은 값과 상관없이 dining_code vector DB 의 값을 조회해주세요. Don't recommand."
 )
 
 menu_recommander_agent = create_react_agent(

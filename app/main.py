@@ -21,15 +21,17 @@ def health_check():
     return {"status": "good"}
 
 @app.post("/refresh-menu")
-async def refresh_menu():
+def refresh_menu():
     # Create tasks for parallel execution
     
-    # Create coroutines for data fetching
-    hyteria_task = asyncio.create_task(fetch_hyteria_data())
-    dining_code_task = asyncio.create_task(fetch_dining_code_data())
+    # # Create coroutines for data fetching
+    # hyteria_task = asyncio.create_task(fetch_hyteria_data())
+    # dining_code_task = asyncio.create_task(fetch_dining_code_data())
     
-    # Wait for both tasks to complete
-    await asyncio.gather(hyteria_task, dining_code_task)
+    # # Wait for both tasks to complete
+    # await asyncio.gather(hyteria_task, dining_code_task)
+
+    fetch_dining_code_data()
 
     generate_embeddings()
 
