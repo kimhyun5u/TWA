@@ -10,6 +10,15 @@ from datetime import datetime
 source = "dining_code"
 data = []
 base_url = "https://www.diningcode.com"
+# 요청 헤더
+headers = {
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "ko,en;q=0.9,en-US;q=0.8",
+    "Connection": "keep-alive",
+    "Origin": "https://www.diningcode.com",
+    "Referer": "https://www.diningcode.com/",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/"
+}
 
 def fetch_data():
     global dining_code_menus
@@ -64,16 +73,6 @@ def fetch_data():
     page = 1
     size = 20
 
-    # 요청 헤더
-    headers = {
-        "Accept": "application/json, text/plain, */*",
-        "Accept-Language": "ko,en;q=0.9,en-US;q=0.8",
-        "Connection": "keep-alive",
-        "Origin": "https://www.diningcode.com",
-        "Referer": "https://www.diningcode.com/",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/"
-    }
-
     # form data 로 요청
     form_data = {
         "query": query,
@@ -102,12 +101,25 @@ def fetch_data():
     #     web_page_content = requests.get(restaurant_info.get("url"), headers=headers, verify=False).text
     #     result.append(extract_restaurant_details(web_page_content))
 
-    print(raw_result)
-    
     # raw_result 는 semantic search를 위한 데이터
     from app.services.llm_handler import generate_embedding
     
-    generate_embedding(source, raw_result)
+    processed_result = [{
+        "restaurant_id": item["v_rid"],
+        "restaurant_name": item["nm"],
+        "category": item["category"],
+        "keywords": [k["term"] for k in item["keyword"]],
+        "score": item["score"],
+        "review_cnt": item["review_cnt"],
+        "favorites_cnt": item["favorites_cnt"],
+        "recommend_cnt": item["recommend_cnt"],
+        "review": [r["review_cont"] for r in item["review_list"]],
+
+    } for item in raw_result]
+
+    print(processed_result, len(processed_result))
+
+    generate_embedding(source, processed_result)
         
 def extract_restaurant_details(html_content: str) -> dict:
     soup = BeautifulSoup(html_content, 'html.parser')
@@ -168,7 +180,64 @@ def extract_restaurant_details(html_content: str) -> dict:
                         'name': item_name,
                         'price': item_price
                     })
-    return {
+
+    # 이미지 추출
+    store_pic = soup.find('div', class_='store-pic')
+    # store-pic 안의 모든 img 태그 찾기
+    img_tags = store_pic.find_all('img')
+
+    # 각 이미지의 src 속성 값 추출
+    image_urls = [img.get('src') for img in img_tags]
+
+    # 리뷰 추출
+    reviews = []
+    # 리뷰는 class="latter-graph"를 가진 div 안에 있습니다.
+    review_divs = soup.find_all('div', class_='latter-graph')
+    for div in review_divs:
+        # 리뷰 id 추출 (예: id="div_review_705706" 에서 "705706")
+        review_id = None
+        if div.has_attr('id'):
+            parts = div['id'].split('_')
+            if parts:
+                review_id = parts[-1]
+        
+        # 작성자 이름: <p class="person-grade"> 내부의 <strong>
+        user_name_tag = div.find('p', class_='person-grade')
+        user_name = user_name_tag.find('strong').get_text(strip=True) if user_name_tag and user_name_tag.find('strong') else None
+
+        # 리뷰 내용: <p class="review_contents btxt">
+        review_content_tag = div.find('p', class_='review_contents')
+        review_content = review_content_tag.get_text(strip=True) if review_content_tag else None
+
+        # 평점: <p class="point-detail"> 내부의 <span class="total_score">
+        rating_tag = div.find('span', class_='total_score')
+        rating = rating_tag.get_text(strip=True) if rating_tag else None
+
+        # 작성일: 보통 <div class="date"> 또는 <p class="person-date"> 내에 포함된 날짜 정보
+        date_tag = div.find('div', class_='date')
+        if not date_tag:
+            # 경우에 따라 <p class="person-date"> 내에 있을 수도 있음
+            person_date = div.find('p', class_='person-date')
+            date_tag = person_date.find('span', class_='date') if person_date else None
+        date_text = date_tag.get_text(strip=True) if date_tag else None
+
+        # 태그 정보: <p class="tags"> 내의 각 <span class="icon">
+        tags = []
+        tags_container = div.find('p', class_='tags')
+        if tags_container:
+            tags = [tag.get_text(strip=True) for tag in tags_container.find_all('span', class_='icon')]
+        
+        reviews.append({
+            'review_id': review_id,
+            'user_name': user_name,
+            'review_content': review_content,
+            'rating': rating,
+            'date': date_text,
+            'reviews': reviews,
+            'tags': tags,
+        })
+    
+    raw_data = {
         'name': name,
         'address': address,
         'category': category,
@@ -178,12 +247,16 @@ def extract_restaurant_details(html_content: str) -> dict:
         'hours': hours,
         'menu': menu_info,
         "source": source,
-        'date': datetime.now().strftime("%Y-%m-%d")
+        'date': datetime.now().strftime("%Y-%m-%d"),
+        "image_urls": image_urls,
+        "reviews": reviews
     }
+    print(raw_data)
+    return raw_data
 
 def fetch_exact_dining_code_data(r_vid):
-    url = f"https://www.diningcode.com/?rid={r_vid}"
-    response = requests.get(url, verify=False)
+    url = f"https://www.diningcode.com/profile.php?rid={r_vid}"
+    response = requests.get(url, headers=headers,verify=False)
     if response.status_code == 200:
         return extract_restaurant_details(response.text)
     else:

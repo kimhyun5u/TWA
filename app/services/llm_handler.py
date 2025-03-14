@@ -27,10 +27,10 @@ from app.services.dining_code_fetcher import fetch_exact_dining_code_data
 
 from app.structures.date_output import DateOutput
 from app.structures.hyteria_menu_output import HyteriaMenuOutputList
-
+from app.structures.dining_code_restaurant_output import DiningCodeRestaurantOutputList
 
 # Initialize the retriever
-retrievers = {}
+vectorstores = {}
 
 embeddings = AzureOpenAIEmbeddings(
     model=settings.aoai_deploy_embed_3_large,
@@ -65,13 +65,13 @@ for source in sources:
         # Vector store already exists, load it
         print("Loading existing vector store from disk...")
         vectorstore = FAISS.load_local(path, embeddings, allow_dangerous_deserialization=True)
-        retrievers[source] = vectorstore.as_retriever()
+        vectorstores[source] = vectorstore
     else:
         # Vector store doesn't exist yet
         print("No existing vector store found. Will create when needed.")
 
 def generate_embedding(source, menus):
-    menus = [Document(page_content=str(menu)) for menu in menus]
+    menus = [Document(page_content=str(menu), metadata={"source": "https://www.diningcode.com"}) for menu in menus]
 
     print("Embeddings created:", embeddings)
     # Check if previously saved vectorstore exists
@@ -92,8 +92,7 @@ def generate_embedding(source, menus):
         print("Vectorstore saved to disk")
     
     print("Vectorstore created/loaded:", vectorstore)
-    retrievers[source] = vectorstore.as_retriever()
-    # print("Retriever created:", retriever)
+    vectorstores[source] = vectorstore
 
 def generate_embeddings():
     for source, menus in [("dining_code", dining_code_menus)]:
@@ -123,13 +122,17 @@ def get_hyteria_menus(date: Annotated[str, "질의 내용 중 하이테리아(�
 @tool
 def get_dining_code_menus(message: Annotated[str, "질의 내용 중 다이닝코드(dining_code) VectorDB 에서 유사도 검색이 필요할 것들에 대한 질의"]):
     """메뉴에 대해서 검색하고 실제 있는 값인지 확인한다."""
-    if "dining_code" not in retrievers:
+    if "dining_code" not in vectorstores:
         return "No retriever available. Please try again later."
-    return retrievers["dining_code"].invoke(message)
+    
+    r = vectorstores["dining_code"].similarity_search(message, k = 10)
+    
+    return r
 
 @tool
-def get_exact_dining_code_menus(v_rid: Annotated[str, "질의 내용 중 다이닝코드(dining_code) Internet 에서 정확한 값이 필요한 경우"]):
-    """메뉴에 대해서 검색하고 실제 있는 값인지 확인한다."""
+def get_exact_dining_code_data(v_rid: Annotated[str, "질의 내용 중 다이닝코드(dining_code) 사이트에서 정확한 값이 필요한 경우 restaurant_id 값을 활용해 제공한다."]):
+    """매장에 대해서 검색하고 상세 정보를 확인한다."""
+    print(v_rid)
     return fetch_exact_dining_code_data(v_rid)
 
 # Create Agent Supervisor
@@ -188,11 +191,13 @@ hyteria_menu_retriever_agent = create_react_agent(
 )
 
 dining_code_menus_retriever_agent = create_react_agent(
-    llm, tools=[get_dining_code_menus, get_exact_dining_code_menus], prompt="You are restaurant retriever. You can check all menu on following date with Restaurant VectorDB. Do Not Math. Do not recommend restaurant. 답변에 추가적인 의견을 제공하지 말고 레스토랑 정보들만 제공해주세요. 사용자의 요청의 적합한 레스토랑만 가져오세요. 모든 레스토랑을 원하는 경우 모든 레스토랑을 가져와주세요. 정보를 변형하지말고 정확하게 전달해주세요. 다른 에이전트에서 전달 받은 값과 상관없이 dining_code vector DB 의 값을 조회해주세요. Don't recommand."
+    llm, tools=[get_dining_code_menus, get_exact_dining_code_data]
+    , prompt="You are restaurant retriever. You can check all menu on following date with Restaurant VectorDB. Do Not Math. Do not recommend restaurant. 답변에 추가적인 의견을 제공하지 말고 레스토랑 정보들만 제공해주세요. 사용자의 요청의 적합한 레스토랑만 가져오세요. 모든 레스토랑을 원하는 경우 모든 레스토랑을 가져와주세요. 정보를 변형하지말고 정확하게 전달해주세요. 다른 에이전트에서 전달 받은 값과 상관없이 dining_code vector DB 의 값을 조회해주세요. Don't recommand."
+    , response_format=DiningCodeRestaurantOutputList
 )
 
 menu_recommander_agent = create_react_agent(
-    o3_llm, tools=[], prompt="You are menu recommander. 다른 agent에 의해 전달받은 값이 없으면 답을 줄 수 없습니다. 사용자가 원하는 메뉴를 주어진 메뉴들 중에 골라주세요. 만약 면요리에 대해서 물어본다면 국수, 라면, 파스타 등에 대한 정보를 찾아주세요. 또한, 답변은 상세하게 진행해주세요. 하이테리아는 hyteria 입니다. 다이닝코드는 dining_code 입니다. 구내식당(hyteria)와 외부식당(dining_code)의 메뉴를 모두 고려해주세요. 답변에 대한 추가적인 의견을 제공하지 말고 메뉴 정보들만 제공해주세요."
+    llm, tools=[get_exact_dining_code_data], prompt="You are menu recommander. 다른 agent에 의해 전달받은 값이 없으면 답을 줄 수 없습니다. 사용자가 원하는 메뉴를 주어진 메뉴들 중에 골라주세요. 만약 면요리에 대해서 물어본다면 국수, 라면, 파스타 등에 대한 정보를 찾아주세요. 또한, 답변은 상세하게 진행해주세요. 하이테리아는 hyteria 입니다. 다이닝코드는 dining_code 입니다. 구내식당(hyteria)와 외부식당(dining_code)의 메뉴를 모두 고려해주세요. 답변에 대한 추가적인 의견을 제공하지 말고 메뉴 정보들만 제공해주세요. 리스트에 restaurant_id 가 있으면 그에 대한 정보를 가져와주세요. 정보를 변형하지말고 정확하게 전달해주세요. 출처가 다이닝코드인 값은 반드시 툴을 활용해 상세 정보를 조회하세요. 질의에 restaurant_id 값이 존재한다면 상세 조회 툴을 사용하세요. 알 수 없는 내용에 대해서는 모른다고 대답하세요."
 )
 
 def calander_node(state: State) -> Command[Literal["supervisor"]]:
@@ -200,34 +205,36 @@ def calander_node(state: State) -> Command[Literal["supervisor"]]:
     result = calander_agent.invoke(state)
 
     # Extract the response content
-    content = result["messages"][-1].content
+    # content = result["messages"][-1].content
     
     # Process the content to extract date information
     # You can use an LLM call here to parse the content into structured data if needed
-    try:
-        # Using llm to parse the calendar content into a structured format
-        structured_content = llm.with_structured_output(DateOutput).invoke(
-            f"Extract the date information from this text: {content}"
-        )
+    # try:
+    #     # Using llm to parse the calendar content into a structured format
+    #     structured_content = llm.with_structured_output(DateOutput).invoke(
+    #         f"Extract the date information from this text: {content}"
+    #     )
         
-        # Create a formatted response that includes the structured date info
-        formatted_response = structured_content.date
-        if hasattr(structured_content, 'description') and structured_content.description:
-            formatted_response += f", Description: {structured_content.description}"
-    except Exception as e:
-        print(f"Error parsing calendar response: {e}")
-        formatted_response = content  # Fallback to original content
+    #     # Create a formatted response that includes the structured date info
+    #     formatted_response = structured_content.date
+    #     if hasattr(structured_content, 'description') and structured_content.description:
+    #         formatted_response += f", Description: {structured_content.description}"
+    # except Exception as e:
+    #     print(f"Error parsing calendar response: {e}")
+    #     formatted_response = content  # Fallback to original content
     
     return Command(
         update={
             "messages": [
-                HumanMessage(content=formatted_response, name="calander")
+                HumanMessage(content=result["structured_response"].date, name="calander")
             ]
         },
         goto="supervisor"
     )
 
 def hyteria_menu_retriever_node(state: State) -> Command[Literal["supervisor"]]:
+    if "messages" not in state or not state["messages"]:
+        return Command(goto="calander")
     date = state["messages"][-1].content
     # validate date with regex if it is not in the correct format(YYYY-MM-DD) go to calander node
     if not re.match(r"\d{4}-\d{2}-\d{2}", date):
@@ -246,7 +253,7 @@ def hyteria_menu_retriever_node(state: State) -> Command[Literal["supervisor"]]:
     try:
         # Using llm to parse the calendar content into a structured format
         processed_content = llm.invoke(
-            f"다음 리스트를 ```markdown``` 같은 것을 넣지말고 마크다운문법으로 예쁘게 만들어줘(메뉴 이미지의 baseurl은 20250313_BD_2_4_LN_1_20250313111249_0.jpg 이면 https://mc.skhystec.com/nsf/menuImage/20250313/BD/2/4/ 이야): {content}"
+            f"다음 리스트를 ```markdown``` 같은 것을 넣지말고 마크다운문법으로 예쁘게 만들어줘(메뉴 이미지의 baseurl은 '20250313'_'BD'_'2'_'4'_LN_1_20250313111249_0.jpg 이면 https://mc.skhystec.com/nsf/menuImage/'20250313'/'BD'/'2'/'4'/ 이야): {content}"
         )
     except Exception as e:
         print(f"Error parsing data response: {e}")
@@ -258,7 +265,7 @@ def hyteria_menu_retriever_node(state: State) -> Command[Literal["supervisor"]]:
     return Command(
         update={
             "messages": [
-                HumanMessage(content=str(formatted_response), name="hyteria_menu_retriever")
+                HumanMessage(content=str(formatted_response), name="hyteria_menu_retriever"),
             ]
         },
         goto="supervisor"
@@ -266,10 +273,22 @@ def hyteria_menu_retriever_node(state: State) -> Command[Literal["supervisor"]]:
 
 def dining_code_menu_retriever_node(state: State) -> Command[Literal["supervisor"]]:
     result = dining_code_menus_retriever_agent.invoke(state)
+
+    # Extract the response content
+    content = result["structured_response"].restaurants
+    
+    # Process the content to extract date information
+    # You can use an LLM call here to parse the content into structured data if needed
+    # formatted_response = llm.invoke(
+    #         f"다음 리스트를 ```markdown``` 같은 것을 넣지말고 마크다운문법으로 예쁘게 만들어줘(모든 정보들이 포함되어야해 특히! restaurant_id 빼먹지마)): {content}"
+    #     ).content
+    
+    
+
     return Command(
         update={
             "messages": [
-                HumanMessage(content=result["messages"][-1].content, name="dining_code_menu_retriever")
+                HumanMessage(content=str(content), name="dining_code_menu_retriever"),
             ]
         },
         goto="supervisor"
@@ -277,10 +296,26 @@ def dining_code_menu_retriever_node(state: State) -> Command[Literal["supervisor
 
 def menu_recommander_node(state: State) -> Command[Literal["supervisor"]]:
     result = menu_recommander_agent.invoke(state)
+
+    content = result["messages"][-1].content
+
+    # Extract the response content
+    # Process the content to extract date information
+    # You can use an LLM call here to parse the content into structured data if needed
+    try:
+        # Using llm to parse the calendar content into a structured format
+        formatted_response = llm.invoke(
+            f"다음 리스트를 ```markdown``` 같은 것을 넣지말고 스마트 브레비티 기법을 사용해 마크다운문법으로 예쁘게 만들어줘 식당 메뉴가 있다면 제공하고 이미지가 있다면 보여줘(추천하는 이유들을 상세히 설명해줘 또한, 사용자의 질문에 적절한 추천인지도 생각해봐.): {content}"
+        ).content
+
+    except Exception as e:
+        print(f"Error parsing data response: {e}")
+        formatted_response = content  # Fallback to original content
+
     return Command(
         update={
             "messages": [
-                HumanMessage(content=result["messages"][-1].content, name="menu_recommander")
+                HumanMessage(content=formatted_response, name="menu_recommander")
             ]
         },
         goto="supervisor"
