@@ -334,13 +334,13 @@ def generate_prompt(messages: str, user_id: str):
     rd = redis.Redis(host='localhost', port=6379, db=0)
 
     # Get the data from Redis and deserialize it
-    user_history_json = rd.get(user_id)
-    if user_history_json:
-        user_history = json.loads(user_history_json)
+    user_taste_json = rd.get(user_id)
+    if user_taste_json:
+        user_taste = user_taste_json.decode("utf-8")
     else:
-        user_history = []
+        user_taste = ""
 
-    # print("user_history:", user_history)
+    # print("user_taste:", user_taste)
 
     s_prompt = SystemMessagePromptTemplate.from_template(
         f"""You are an assistant for question-answering tasks. 
@@ -349,7 +349,7 @@ def generate_prompt(messages: str, user_id: str):
         Today is {datetime.now().strftime('%Y-%m-%d')}.
         Think about menus of {datetime.now().strftime('%Y-%m-%d')} and answer the following question.
         And Should think about the menu's date.
-        What's date of today? And Think about the date in {messages}.
+        What's date of today? And Think about the date in Question.
         만약 메뉴 추천을 원한다면 {datetime.now().strftime('%Y-%m-%d')}의 메뉴들을 찾아보고, 그 중에서 적합한 메뉴를 추천해주세요.
         단순 메뉴를 나열하는 것이 아닌 추천을 요청받으면 반드시 추천해주세요.
         ```markdown``` 같은 것을 넣지말고 마크다운문법으로 최종 결과를 출력해주세요.
@@ -357,14 +357,18 @@ def generate_prompt(messages: str, user_id: str):
         Answer in Korean.
         """)
     u_prompt = HumanMessagePromptTemplate.from_template(f"""
+        #사용자의 취향은 다음과 같습니다. 참고해서 메뉴 추천을 진행해주세요.
+        {user_taste}
+
         #Question:
         {messages}
 
         #Answer:"""
     )
 
-    chat_prompt = ChatPromptTemplate.from_messages([s_prompt, u_prompt])
-
+    chat_prompt = ChatPromptTemplate.from_messages([s_prompt.format(), u_prompt.format()])
+    
+    full_result = [{"role": "user", "content": chat_prompt.format()}]
     result = []
     for c in graph.stream({"messages": [ ("user", chat_prompt.format())]}):
         # chunk에서 messages의 마지막 항목을 추출 (응답이 여기에 있다고 가정)
@@ -377,10 +381,31 @@ def generate_prompt(messages: str, user_id: str):
             result.append({"role": "menu_recommander","content": c["menu_recommander"]["messages"][-1].content})
         if "calander" in c:
             result.append({"role": "calander","content": c["calander"]["messages"][-1].content})
-    
+    print(result)
     # user_history 의 길이가 10이 넘어가지 않도록 관리
-    user_history.append({"request": chat_prompt.format(),"response": result})
-    
+    user_taste = llm.invoke(f""""
+                            다음 대화 내용을 분석하여 사용자의 음식 취향을 추출합니다.  
+                새로운 취향 정보가 확인되면 기존 취향 데이터({user_taste})를 업데이트합니다.  
+                단, 사용자가 명확히 언급하지 않은 사항은 추가하지 않으며, 불확실한 정보는 기존 취향을 유지합니다.  
+                사용자의 감정적 표현(예: "이건 별로야", "좋아하지 않음")과 선호(예: "좋아해", "자주 먹음")를 포함한 문맥을 고려하여 취향을 판단합니다.  
+                사용자의 특정 상황(예: 다이어트, 채식, 특정 음식 알러지 등)도 반영하여 종합적으로 판단합니다.  
+
+                ### 응답 예시 (실제 데이터와 다를 수 있음):
+                **사용자의 취향:**  
+                ✅ 선호하는 음식: 닭고기, 매운 음식, 초밥  
+                ❌ 기피하는 음식: 해산물, 당도가 높은 음식  
+                ⚠️ 상황적 요소: 다이어트 중, 저탄수화물 식단 유지  
+
+                ### 대화 내역:
+                {messages}  
+
+                ### 기존 취향 데이터:
+                {user_taste}  
+
+                **업데이트된 사용자의 취향을 반환하세요.**  
+                """).content
+    rd.set(f"{user_id}_history", json.dumps(full_result + result))
+    print("생성된 유저 취향: ", user_taste)
     # list 파일 redis
-    rd.set(user_id, json.dumps(user_history[-10:]))
+    rd.set(user_id, user_taste)
     return result
