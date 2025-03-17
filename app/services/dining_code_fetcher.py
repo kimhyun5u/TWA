@@ -102,6 +102,18 @@ def fetch_data():
     #     result.append(extract_restaurant_details(web_page_content))
 
     # raw_result 는 semantic search를 위한 데이터
+
+    # 추가적인 데이터 추출 
+    for idx, item in enumerate(raw_result):
+        r_vid = item["v_rid"]
+        # 이미 데이터가 있는지 확인
+
+        data = fetch_exact_dining_code_data(r_vid)
+        # 데이터 저장
+        raw_result[idx]["menu"] = data["menu"]
+        raw_result[idx]["review_list"].extend([{"review_cont": r["review_content"]} for r in data["reviews"]])
+
+    # raw_result를 가공하여 embedding 생성
     from app.services.llm_handler import generate_embedding
     
     processed_result = [{
@@ -109,6 +121,7 @@ def fetch_data():
         "restaurant_name": item["nm"],
         "category": item["category"],
         "keywords": [k["term"] for k in item["keyword"]],
+        "menu": item["menu"],
         "score": item["score"],
         "review_cnt": item["review_cnt"],
         "favorites_cnt": item["favorites_cnt"],
@@ -251,7 +264,7 @@ def extract_restaurant_details(html_content: str) -> dict:
         "image_urls": image_urls,
         "reviews": reviews
     }
-    print(raw_data)
+    # print(raw_data)
     return raw_data
 
 def fetch_exact_dining_code_data(r_vid):
