@@ -15,7 +15,7 @@ class DiningCodeRestaurantOutputList(BaseModel):
         restaurant_name: str = Field(description="Restaurant_name")
         category: str = Field(description="Category")
         keywords: Optional[List[str]] = Field(description="Keywords")
-        menu: Optional[List[Menu]] = Field(description="Menu"),
+        menu: Optional[List[Menu]] = Field(default=None, description="Menu")
         score: int = Field(description="Score")
         review_cnt: int = Field(description="Review count")
         favorites_cnt: int = Field(description="Favorites count")
