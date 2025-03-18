@@ -1,8 +1,4 @@
-import json
-import redis
 from bs4 import BeautifulSoup
-from urllib.parse import quote
-from app.shared_state import dining_code_menus
 import requests
 from datetime import datetime
 
@@ -21,50 +17,6 @@ headers = {
 }
 
 def fetch_data():
-    global dining_code_menus
-    
-    rd = redis.Redis(host='localhost', port=6379, db=0)
-
-    # # 첫 번째 요청 (쿠키 가져오기)
-    # response = session.get(base_url, headers=headers, verify=False)
-    # cookies = session.cookies.get_dict()  # 동적 쿠키 저장
-
-    # # 두 번째 요청 (검색 페이지 접근)
-    # search_url = f"https://www.diningcode.com/list.dc?query={requests.utils.quote(search_query)}"
-    # response = session.get(search_url, headers=headers, cookies=cookies, verify=False)
-    # list_page_content = None
-    # # 응답 확인
-    # if response.status_code == 200:
-    #     list_page_content = response.text
-    # else:
-    #     print(f"Error: {response.status_code}")# HTML에서 JSON 데이터 추출 (첨부 파일 ID 0 가정)
-
-    # soup = BeautifulSoup(list_page_content, 'html.parser')
-    # json_data = soup.find('script', {'type': 'application/ld+json'})
-    # print(json_data.string)
-    # data = json.loads(json_data.string)
-
-    # # 추가적으로 데이터 fetching 하기
-
-
-    # # URL 수정
-    # for item in data.get("itemListElement", []):
-    #     url = item.get("url")
-    #     if url:
-    #         parts = url.split(maxsplit=1)
-    #         if len(parts) == 2:
-    #             domain = parts[0]
-    #             path_part = parts[1].strip()
-    #             if '?' in path_part:
-    #                 path_part_path, path_part_query = path_part.split('?', 1)
-    #                 encoded_path = quote(path_part_path)
-    #                 encoded_query = quote(path_part_query)  # 공백을 %20으로 인코딩
-    #                 correct_path = encoded_path + '?' + encoded_query
-    #             else:
-    #                 encoded_path = quote(path_part)
-    #                 correct_path = encoded_path
-    #             item["corrected_url"] = domain + '/' + correct_path
-
     url = "https://im.diningcode.com/API/isearch/"
 
     # 검색어
@@ -93,15 +45,6 @@ def fetch_data():
         data = response.json()["result_data"]["poi_section"]["list"]
         raw_result.extend(data)
         form_data["page"] = str(i + 1)
-
-    # result = []
-    # # 첨부 파일로 웹 페이지 내용 가져오기
-    # for idx, restaurant_info in enumerate(data.get("itemListElement", [])):
-    #     # print(restaurant_info) # 데이터 확인
-    #     web_page_content = requests.get(restaurant_info.get("url"), headers=headers, verify=False).text
-    #     result.append(extract_restaurant_details(web_page_content))
-
-    # raw_result 는 semantic search를 위한 데이터
 
     # 추가적인 데이터 추출 
     for idx, item in enumerate(raw_result):
