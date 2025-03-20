@@ -19,9 +19,8 @@ class Settings(BaseSettings):
     aoai_o3_mini_endpoint: str
     aoai_o3_mini_deployment_name:str
     aoai_o3_mini_version: str
-
     class Config:
-        env_file = '.env'
+        env_file = '.env.llm'
         env_file_encoding = 'utf-8'
 
 
