@@ -55,7 +55,8 @@ def fetch_data():
         # 데이터 저장
         raw_result[idx]["menu"] = data["menu"]
         raw_result[idx]["review_list"].extend([{"review_cont": r["review_content"]} for r in data["reviews"]])
-
+        raw_result[idx]["image_urls"] = data["image_urls"]
+    
     # raw_result를 가공하여 embedding 생성
     from app.services.llm_handler import generate_embedding
     
@@ -64,13 +65,13 @@ def fetch_data():
         "restaurant_name": item["nm"],
         "category": item["category"],
         "keywords": [k["term"] for k in item["keyword"]],
+        "images": item["image_urls"],
         "menu": item["menu"],
         "score": item["score"],
         "review_cnt": item["review_cnt"],
         "favorites_cnt": item["favorites_cnt"],
         "recommend_cnt": item["recommend_cnt"],
         "review": [r["review_cont"] for r in item["review_list"]],
-
     } for item in raw_result]
 
     print(processed_result, len(processed_result))
