@@ -4,8 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.services.hyteria import fetch_data as fetch_hyteria_data
 from app.services.dining_code_fetcher import fetch_data as fetch_dining_code_data
 from app.services.llm_handler import generate_prompt, generate_embeddings
-import asyncio
-
+from fastapi.responses import StreamingResponse
 app = FastAPI()
 
 app.add_middleware(
@@ -22,23 +21,14 @@ def health_check():
 
 @app.post("/refresh-menu")
 def refresh_menu():
-    # Create tasks for parallel execution
-    
-    # # Create coroutines for data fetching
-    # hyteria_task = asyncio.create_task(fetch_hyteria_data())
-    # dining_code_task = asyncio.create_task(fetch_dining_code_data())
-    
-    # # Wait for both tasks to complete
-    # await asyncio.gather(hyteria_task, dining_code_task)
-
     fetch_dining_code_data()
 
     generate_embeddings()
 
     return {"status": "OK"}
 
-@app.post("/prompt")
-def prompt(messages: str, user_id: str):
-    response = generate_prompt(messages, user_id)
+@app.get("/prompt")
+async def prompt(messages: str, user_id: str):
+    # response = generate_prompt(messages, user_id)
 
-    return {"messages": response}
+    return  StreamingResponse(generate_prompt(messages, user_id), media_type="text/event-stream")

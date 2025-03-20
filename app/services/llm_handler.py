@@ -1,5 +1,5 @@
 
-import redis
+import asyncio
 import json
 import os
 import re
@@ -14,11 +14,10 @@ from langchain_core.prompts import ChatPromptTemplate, SystemMessagePromptTempla
 from langchain_core.tools import tool
 from langchain_core.messages import HumanMessage
 from langchain_core.documents import Document
+
 from langgraph.prebuilt import create_react_agent
 from langgraph.graph import StateGraph, START, MessagesState, END
 from langgraph.types import Command
-from langchain_core.chat_history import InMemoryChatMessageHistory
-
 
 from app.config import settings
 
@@ -179,7 +178,7 @@ system_prompt = (
     "You Should use hyteria_menu_retriever worker if user'll ask about hyteria menu. "
     "You Should use dining_code_menu_retriever worker if user'll ask about dining_code menu or eat outside. "
     "You Should use menu_recommander worker if user'll ask about recommand menu. And You should use menu_recommander worker after hyteria_menu_retriever and dining_code_menu_retriever. "
-    "menu_recommaner must be used after hyteria_menu_retriever and dining_code_menu_retriever."
+    "menu_recommander **MUST** be used after hyteria_menu_retriever or dining_code_menu_retriever."
     "If no more workers are needed, respond with FINISH."
     "When finished, respond with FINISH."
 )
@@ -219,7 +218,20 @@ dining_code_menus_retriever_agent = create_react_agent(
 )
 
 menu_recommander_agent = create_react_agent(
-    o3_llm, tools=[get_exact_dining_code_data], prompt="You are menu recommander. 다른 agent에 의해 전달받은 값이 없으면 답을 줄 수 없습니다. 사용자가 원하는 메뉴를 주어진 메뉴들 중에 골라주세요. 만약 면요리에 대해서 물어본다면 국수, 라면, 파스타 등에 대한 정보를 찾아주세요. 또한, 답변은 상세하게 진행해주세요. 하이테리아는 hyteria 입니다. 다이닝코드는 dining_code 입니다. 구내식당(hyteria)와 외부식당(dining_code)의 메뉴를 모두 고려해주세요. 답변에 대한 추가적인 의견을 제공하지 말고 메뉴 정보들만 제공해주세요. 리스트에 restaurant_id 가 있으면 그에 대한 정보를 가져와주세요. 정보를 변형하지말고 정확하게 전달해주세요. 출처가 다이닝코드인 값은 반드시 툴을 활용해 상세 정보를 조회하세요. 질의에 restaurant_id 값이 존재한다면 상세 조회 툴을 사용하세요. 알 수 없는 내용에 대해서는 모른다고 대답하세요."
+    o3_llm, tools=[get_exact_dining_code_data], 
+    prompt="""You are menu recommander. 참석자를 생각해보고 참석자가 선호할만한 음식들을 생각해보자. 
+    그리고 답변에 추천의 이유를 상세히 작성해서 논리적으로 설명해주세요.
+    다른 agent에 의해 전달받은 값이 없으면 답을 줄 수 없습니다. 사용자가 원하는 메뉴를 주어진 메뉴들 중에 골라주세요.
+    만약 면요리에 대해서 물어본다면 국수, 라면, 파스타 등에 대한 정보를 찾아주세요. 또한, 답변은 상세하게 진행해주세요.
+    답변에 대한 추가적인 의견을 제공하지 말고 메뉴 정보들만 제공해주세요.
+    리스트에 restaurant_id 가 있으면 그에 대한 정보를 가져와주세요. 정보를 변형하지말고 정확하게 전달해주세요.
+    출처가 다이닝코드인 값은 반드시 툴을 활용해 상세 정보를 조회하세요. 질의에 restaurant_id 값이 존재한다면 상세 조회 툴을 사용하세요.
+    알 수 없는 내용에 대해서는 모른다고 대답하세요.
+    답변은 마크다운문법으로 예쁘게 만들어주세요.
+    식당 메뉴가 있다면 제공하고 이미지가 있다면 보여주세요.
+    충분히 고민해보고 대답하세요.
+    추천하는 이유들을 상세히 설명해주고 또한, 사용자의 질문에 적절한 추천인지도 생각해보세요.
+    """
 )
 
 def calander_node(state: State) -> Command[Literal["hyteria_menu_retriever"]]:
@@ -281,7 +293,7 @@ def hyteria_menu_retriever_node(state: State) -> Command[Literal["supervisor"]]:
         goto="supervisor"
     )
 
-def dining_code_menu_retriever_node(state: State) -> Command[Literal["supervisor"]]:
+def dining_code_menu_retriever_node(state: State) -> Command[Literal["menu_recommander"]]:
     result = dining_code_menus_retriever_agent.invoke(state)
 
     # Extract the response content
@@ -292,7 +304,7 @@ def dining_code_menu_retriever_node(state: State) -> Command[Literal["supervisor
     try:
         # Using llm to parse the calendar content into a structured format
         processed_content = llm.invoke(
-            f"다음 리스트를 ```markdown``` 같은 것을 넣지말고 마크다운문법으로 예쁘게 만들어줘: {content}"
+            f"다음 리스트를 마크다운문법으로 예쁘게 만들어주세요. 코드 블럭은 사용하지 말아 주세요: {content}"
         )
         
         formatted_response = processed_content.content
@@ -306,7 +318,7 @@ def dining_code_menu_retriever_node(state: State) -> Command[Literal["supervisor
                 HumanMessage(content=str(formatted_response), name="dining_code_menu_retriever"),
             ]
         },
-        goto="supervisor"
+        goto="menu_recommander"
     )
 
 def menu_recommander_node(state: State) -> Command[Literal[END]]:
@@ -314,18 +326,7 @@ def menu_recommander_node(state: State) -> Command[Literal[END]]:
 
     content = result["messages"][-1].content
 
-    # Extract the response content
-    # Process the content to extract date information
-    # You can use an LLM call here to parse the content into structured data if needed
-    try:
-        # Using llm to parse the calendar content into a structured format
-        formatted_response = llm.invoke(
-            f"다음 리스트를 ```markdown``` 같은 것을 넣지말고 스마트 브레비티 기법을 사용해 마크다운문법으로 예쁘게 만들어줘 식당 메뉴가 있다면 제공하고 이미지가 있다면 보여줘(추천하는 이유들을 상세히 설명해줘 또한, 사용자의 질문에 적절한 추천인지도 생각해봐.): {content}"
-        ).content
-
-    except Exception as e:
-        print(f"Error parsing data response: {e}")
-        formatted_response = content  # Fallback to original content
+    formatted_response = content
 
     return Command(
         update={
@@ -347,50 +348,38 @@ builder.add_node("menu_recommander", menu_recommander_node)
 graph = builder.compile()
 
 # -------------------- Main Function --------------------
-def generate_prompt(messages: str, user_id: str):
-
+async def generate_prompt(messages: str, user_id: str):
     s_prompt = SystemMessagePromptTemplate.from_template(
-        f"""You are an assistant for question-answering tasks. 
-        Use the following pieces of retrieved context to answer the question. 
-        If you don't know the answer, just say that you don't know. 
-        Today is {datetime.now().strftime('%Y-%m-%d')}.
-        Think about menus of {datetime.now().strftime('%Y-%m-%d')} and answer the following question.
-        And Should think about the menu's date.
-        What's date of today? And Think about the date in Question.
-        만약 메뉴 추천을 원한다면 {datetime.now().strftime('%Y-%m-%d')}의 메뉴들을 찾아보고, 그 중에서 적합한 메뉴를 추천해주세요.
-        단순 메뉴를 나열하는 것이 아닌 추천을 요청받으면 반드시 추천해주세요.
-        ```markdown``` 같은 것을 넣지말고 마크다운문법으로 최종 결과를 출력해주세요.
-        사용자는 밖에서 먹고싶거나 구내식당에서 먹고싶다고 할 수 있습니다. 이에 대한 답변을 해주세요.
-        특정 목적에 대해서 물어보지 않는다면 밖에서 먹고싶다는 뜻입니다.
-
-        Answer in Korean.
+        f"""# 기본 원칙
+            항상 오늘 날짜(예: 2025-03-20)를 기준으로 메뉴 정보를 확인하고, 메뉴 추천 시 날짜 일치를 최우선으로 고려합니다.
+            사용자가 별도로 구내식당 메뉴를 요청하지 않는 한, 기본적으로 밖에서 먹고 싶다는 의미로 해석하여 메뉴를 추천합니다.
+            # 메뉴 추천 조건
+            오늘의 메뉴 데이터를 참조하여, 해당 날짜에 제공 가능한 메뉴 중에서 최적의 선택지를 추천합니다.
+            사용자가 "구내식당"이라는 단어를 포함한 문의를 할 경우, 구내식당 메뉴 데이터를 기반으로 추천합니다.
+            메뉴 추천 시, 메뉴의 맛, 영양, 계절성 등 다양한 요소를 고려하여 간략한 설명을 덧붙입니다.
+            # 입력 처리
+            사용자가 "오늘" 또는 특정 날짜(예: 2025-03-20)의 메뉴를 요청하면, 반드시 해당 날짜의 메뉴를 확인하고 추천합니다.
+            메뉴 추천이 아닌 단순 날짜 문의일 경우, 오늘의 날짜(예: 2025-03-20)를 정확하게 답변합니다.
+            # 출력 형식
+            최종 결과는 마크다운 문법을 활용해 코드블럭 없이 텍스트 형태로 출력합니다.
+            출력 내용은 오늘 날짜, 추천 메뉴, 그리고 메뉴에 대한 간략한 설명 등을 포함하여 제공됩니다.
+            한국어를 통해 자연스럽게 응답하고, 사용자의 요청에 최대한 맞추어 답변합니다.
         """)
-    u_prompt = HumanMessagePromptTemplate.from_template(f"""
-
-        #Question:
-        {messages}
-
-        #Answer:"""
-    )
-
-    chat_prompt = ChatPromptTemplate.from_messages([s_prompt.format(), u_prompt.format()])
+    u_prompt = HumanMessagePromptTemplate.from_template(messages)
 
     result = []
 
-    messages = [chat_prompt.format()]
+    # messages = [{chat_prompt.format()}]
 
-    for c in graph.stream({"messages": messages}):
+    for c in graph.stream({"messages": [s_prompt.format(), u_prompt.format()]}, stream_mode="values"):
         # chunk에서 messages의 마지막 항목을 추출
-        print(c)
-        if "hyteria_menu_retriever" in c and "messages" in c["hyteria_menu_retriever"]:
-            result.append({"role": "hyteria_menu_retriever","content": c["hyteria_menu_retriever"]["messages"][-1].content})
-        if "dining_code_menu_retriever" in c:
-            result.append({"role": "dining_code_menu_retriever","content": c["dining_code_menu_retriever"]["messages"][-1].content})
-        if "menu_recommander" in c:
-            result.append({"role": "menu_recommander","content": c["menu_recommander"]["messages"][-1].content})
-        if "calander" in c:
-            result.append({"role": "calander","content": c["calander"]["messages"][-1].content})
+        print("chunk: ", c["messages"][-1].name, c["messages"][-1].content)
+        chat = {"role": c["messages"][-1].name, "content": c["messages"][-1].content}
+        result.append({"role": c["messages"][-1].name, "content": c["messages"][-1].content})
 
-    return result
+        yield f"data: {str(json.dumps(chat))}\n\n"
+        await asyncio.sleep(0.01)
+    yield "event: end\ndata: [DONE]\n\n"
+    # return result
 
 load_vector_stores()
