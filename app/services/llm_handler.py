@@ -252,7 +252,6 @@ dining_code_menus_retriever_agent = create_react_agent(
     - **전달**  
     식당 검색 후 menu_recommander 에게 전달해주세요.
     """
-    , response_format=DiningCodeRestaurantOutputList
 )
 
 menu_recommander_agent = create_react_agent(
@@ -290,8 +289,8 @@ menu_recommander_agent = create_react_agent(
   - 최초 계획에 맞추어 답변을 생성했는지 확인할 것.
   - 충분히 고민하여 사용자의 질문에 적절한 추천인지 검토 후 답변할 것.  
   - 추천하는 이유들을 상세히 설명할 것.
-  - 가독성 좋게 작성할 것.
-  
+  - 이모티콘을 넣어 가독성 좋게 작성할 것.
+
   - 예시:
     # [식당 이름 혹은 코너, 메뉴 이름]
     
