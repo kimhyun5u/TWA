@@ -21,8 +21,6 @@ from langgraph.types import Command
 
 from app.config import settings
 
-from app.shared_state import dining_code_menus
-
 from app.services.hyteria import fetch_menu_data as fetch_hyteria_data
 from app.services.dining_code_fetcher import fetch_exact_dining_code_data
 

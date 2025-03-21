@@ -2,8 +2,6 @@ import json
 import requests
 from datetime import datetime, timedelta
 
-from app.shared_state import hyteria_menus
-
 source = "hyteria"
 
 def fetch_menu_data(date):
