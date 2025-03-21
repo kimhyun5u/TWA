@@ -15,10 +15,6 @@
 - **FAISS VectorDB**를 사용하여 식당 및 메뉴 데이터를 저장 및 검색
 - **Azure OpenAI Embeddings**로 텍스트 기반 유사도 검색 수행
 
-### ✅ Redis 캐싱
-- 사용자 식습관 데이터를 Redis에 저장하여 맞춤형 메뉴 추천
-- 검색 결과를 캐싱하여 빠른 응답 제공
-
 ### ✅ 외부 API 연동
 - **Hyteria API**: 구내식당의 최신 메뉴 데이터를 가져옴
 - **Dining Code API**: 외부 식당의 상세 정보를 조회하여 제공
@@ -26,8 +22,7 @@
 ## 🛠️ 기술 스택
 - **Backend**: FastAPI, LangChain, LangGraph
 - **Vector Search**: FAISS
-- **LLM**: Azure OpenAI GPT-4o
-- **Database**: Redis
+- **LLM**: Azure OpenAI GPT-4o-mini, o3-mini
 - **Infra**: Docker, Azure Cloud
 
 ## 🔄 시스템 아키텍처
